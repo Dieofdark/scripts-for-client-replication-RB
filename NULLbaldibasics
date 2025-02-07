@@ -1,0 +1,67 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+if not char then return end
+
+for _, part in pairs(char:GetChildren()) do
+	if part:IsA("BasePart") or part:IsA("MeshPart") then
+		part.Transparency = 1
+	end
+end
+if char:FindFirstChild("Head") and char.Head:FindFirstChild("face") then
+	char.Head.face.Transparency = 1
+end
+if char:FindFirstChild("Accessory (Classic red band top hat)") and char["Accessory (Classic red band top hat)"]:FindFirstChild("Handle") then
+	char["Accessory (Classic red band top hat)"].Handle.Transparency = 1
+end
+if char:FindFirstChild("Accessory (6Accessory)") and char["Accessory (6Accessory)"]:FindFirstChild("Handle") then
+	char["Accessory (6Accessory)"].Handle.Transparency = 1
+end
+
+local imageLabel = Instance.new("BillboardGui")
+imageLabel.Adornee = char:FindFirstChild("HumanoidRootPart")
+imageLabel.Size = UDim2.new(10, 0, 10, 0)
+imageLabel.StudsOffset = Vector3.new(0, 3, 0)
+imageLabel.Parent = char
+
+local image = Instance.new("ImageLabel")
+image.Size = UDim2.new(1, 0, 1, 0)
+image.Image = "rbxassetid://115462920731307"
+image.BackgroundTransparency = 1
+image.Parent = imageLabel
+
+local sound1 = Instance.new("Sound", workspace)
+sound1.SoundId = "rbxassetid://2029002846"
+sound1.Volume = 100
+sound1.Looped = false
+sound1:Play()
+
+sound1.Ended:Connect(function()
+	local sound2 = Instance.new("Sound", workspace)
+	sound2.SoundId = "rbxassetid://9106419038"
+	sound2.Volume = 1000
+	sound2.Looped = false
+	sound2:Play()
+	sound2.Ended:Connect(function()
+		sound2:Play()
+	end)
+	local humanoid = char:FindFirstChild("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = 100
+	end
+	RunService.Heartbeat:Connect(function()
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+				local dist = (plr.Character.HumanoidRootPart.Position - char.HumanoidRootPart.Position).Magnitude
+				if dist <= 50 then
+					local otherHumanoid = plr.Character:FindFirstChild("Humanoid")
+					if otherHumanoid and otherHumanoid.Health > 0 then
+						otherHumanoid.Health = 0
+					end
+				end
+			end
+		end
+	end)
+end)
+--NULL baldi basics by me lol:D
