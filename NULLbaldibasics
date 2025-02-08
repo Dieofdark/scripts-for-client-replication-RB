@@ -12,11 +12,12 @@ end
 if char:FindFirstChild("Head") and char.Head:FindFirstChild("face") then
 	char.Head.face.Transparency = 1
 end
-if char:FindFirstChild("Accessory (Classic red band top hat)") and char["Accessory (Classic red band top hat)"]:FindFirstChild("Handle") then
-	char["Accessory (Classic red band top hat)"].Handle.Transparency = 1
-end
-if char:FindFirstChild("Accessory (6Accessory)") and char["Accessory (6Accessory)"]:FindFirstChild("Handle") then
-	char["Accessory (6Accessory)"].Handle.Transparency = 1
+
+-- Удаление всех аксессуаров
+for _, accessory in pairs(char:GetChildren()) do
+	if accessory:IsA("Accessory") then
+		accessory:Destroy()
+	end
 end
 
 local imageLabel = Instance.new("BillboardGui")
@@ -64,4 +65,6 @@ sound1.Ended:Connect(function()
 		end
 	end)
 end)
---NULL baldi basics by me lol:D
+
+--NULL baldi basics by me lol:D 
+--NickName on RB: Nikitosik_9088 / LOLkidd
