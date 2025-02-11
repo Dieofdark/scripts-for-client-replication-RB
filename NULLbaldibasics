@@ -13,7 +13,6 @@ if char:FindFirstChild("Head") and char.Head:FindFirstChild("face") then
 	char.Head.face.Transparency = 1
 end
 
--- Удаление всех аксессуаров
 for _, accessory in pairs(char:GetChildren()) do
 	if accessory:IsA("Accessory") then
 		accessory:Destroy()
