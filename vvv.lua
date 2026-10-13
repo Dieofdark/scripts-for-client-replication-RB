@@ -2,6 +2,7 @@
     NorthDLC v7
     GUI с анимацией, настройками, горячими клавишами и экранными кнопками.
     Fly: Smooth Physics, Velocity, CFrame, AirWalk, Adaptive (Test).
+    Disabler: Easy.gg Recovery (Test), восстановление после коррекций движения.
     Работа режимов зависит от физики и серверных проверок конкретной игры.
 ]]
 
@@ -1293,6 +1294,29 @@ local FlyAcceleration = 100
 local FlyCameraRelative = true
 local FlyFaceCamera = false
 local FlyDiagnostics = false
+local DisablerActive = false
+local DisablerMode = "Easy.gg Recovery (Test)"
+local DisablerPause = 0.8
+local DisablerRetries = 3
+local DisablerSpeedRetention = 0.65
+local DisablerDiagnostics = false
+local MovementRecoveryPaused = false
+local RecoveryStateChanged
+local function setMovementRecoveryPaused(paused)
+    if MovementRecoveryPaused == paused then return end
+    MovementRecoveryPaused = paused
+    if RecoveryStateChanged then RecoveryStateChanged(paused) end
+end
+-- Add future modes here. A profile describes recovery behavior, not a claim
+-- that the game's server-side validation has been disabled.
+local DisablerProfiles = {
+    ["Easy.gg Recovery (Test)"] = {
+        GameId = 2619619496,
+        Grace = 0.75,
+        MismatchDuration = 1.25,
+        PositionThreshold = 8,
+    },
+}
 local FlyConnection, FlyMonitorConnection
 local FlyModule
 local FlyHumanoid, FlyRoot, FlyHumanoidState
@@ -1358,6 +1382,7 @@ local function cleanupFlyPhysics()
         end
     end
     FlyHumanoid, FlyRoot, FlyHumanoidState = nil, nil, nil
+    setMovementRecoveryPaused(false)
     FlyTouchUp, FlyTouchDown = false, false
     FlyMobileControls.Visible = false
 end
@@ -1416,12 +1441,18 @@ local function runFlyEngine()
     end
     local velocity, orientation
     local adaptive = FlyMode == "Adaptive (Test)"
+    local recoveryProfile = DisablerActive and DisablerProfiles[DisablerMode] or nil
+    if recoveryProfile and recoveryProfile.GameId ~= game.GameId then recoveryProfile = nil end
+    if FlyMode == "AirWalk" then recoveryProfile = nil end
+    local recoveryEnabled = adaptive or recoveryProfile ~= nil
+    local recoveryLabel = recoveryProfile and "Disabler" or "Adaptive"
     local constraintFlight = FlyMode == "Smooth Physics" or adaptive
     local currentVelocity = Vector3.zero
     local recoveryRemaining, recoveryElapsed, recoveryAttempts = 0, 0, 0
     local adaptiveSpeedScale = 1
     local startRotation = hrp.CFrame.Rotation
-    local graceRemaining = 0.6
+    local recoveryGrace = recoveryProfile and recoveryProfile.Grace or 0.6
+    local graceRemaining = recoveryGrace
     local floorY
     local function setFlightState(enabled)
         hum.PlatformStand = enabled or FlyHumanoidState.PlatformStand
@@ -1430,7 +1461,7 @@ local function runFlyEngine()
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, not enabled and FlyHumanoidState.Ragdoll)
     end
     local function stopAdaptive(reason)
-        warn("[NorthDLC Fly] Adaptive stopped: " .. reason)
+        warn("[NorthDLC " .. recoveryLabel .. "] Fly stopped: " .. reason)
         if FlyModule then
             FlyModule.SetState(false)
         else
@@ -1439,17 +1470,20 @@ local function runFlyEngine()
         end
     end
     local function yieldFlight(reason)
-        if not adaptive or recoveryRemaining > 0 then return end
+        if not recoveryEnabled or recoveryRemaining > 0 then return end
         recoveryAttempts = recoveryAttempts + 1
-        if recoveryAttempts > 3 then stopAdaptive("repeated corrections") return end
-        recoveryRemaining, recoveryElapsed = 0.8, 0
-        adaptiveSpeedScale = adaptiveSpeedScale * 0.65
+        local retryLimit = recoveryProfile and DisablerRetries or 3
+        if recoveryAttempts > retryLimit then stopAdaptive("repeated corrections") return end
+        recoveryRemaining = recoveryProfile and DisablerPause or 0.8
+        recoveryElapsed = 0
+        adaptiveSpeedScale = adaptiveSpeedScale * (recoveryProfile and DisablerSpeedRetention or 0.65)
         currentVelocity = Vector3.zero
-        velocity.Enabled = false
-        orientation.Enabled = false
+        if velocity then velocity.Enabled = false end
+        if orientation then orientation.Enabled = false end
         setFlightState(false)
-        warn(string.format("[NorthDLC Fly] Adaptive pause %d/3: %s; next speed cap=%.1f",
-            recoveryAttempts, reason, FlySpeed * adaptiveSpeedScale))
+        setMovementRecoveryPaused(true)
+        warn(string.format("[NorthDLC %s] Pause %d/%d: %s; next speed cap=%.1f",
+            recoveryLabel, recoveryAttempts, retryLimit, reason, FlySpeed * adaptiveSpeedScale))
     end
     if FlyMode == "AirWalk" then
         InvisibleFloor = own(Instance.new("Part"))
@@ -1510,29 +1544,33 @@ local function runFlyEngine()
     local mismatchTime, diagnosticCooldown = 0, 0
     local previousPosition = hrp.Position
     local previousVelocity = hrp.AssemblyLinearVelocity
-    if FlyDiagnostics then
+    if FlyDiagnostics or recoveryProfile and DisablerDiagnostics then
         print("[NorthDLC Fly] Start", FlyMode, "PlaceId", game.PlaceId, "GameId", game.GameId)
+        if recoveryProfile then print("[NorthDLC Disabler] Profile", DisablerMode) end
     end
     FlyConnection = RunService.PreSimulation:Connect(function(dt)
         if not FlyActive or Hub.Destroyed or LocalPlayer.Character ~= char or not hrp.Parent or hum.Health <= 0 then
             cleanupFlyPhysics()
             return
         end
-        if adaptive and recoveryRemaining > 0 then
+        if recoveryEnabled and recoveryRemaining > 0 then
             recoveryElapsed = recoveryElapsed + dt
             recoveryRemaining = math.max(0, recoveryRemaining - dt)
             if recoveryRemaining == 0 then
                 if hrp.Anchored or hum.Sit then
-                    if recoveryElapsed >= 2 then stopAdaptive("character remains anchored or seated") return end
+                    local timeout = math.max(2, recoveryProfile and DisablerPause + 1 or 2)
+                    if recoveryElapsed >= timeout then stopAdaptive("character remains anchored or seated") return end
                     recoveryRemaining = 0.1
                 else
                     currentVelocity = Vector3.zero
                     startRotation = hrp.CFrame.Rotation
-                    velocity.VectorVelocity = Vector3.zero
-                    velocity.Enabled, orientation.Enabled = true, true
+                    if constraintFlight then velocity.VectorVelocity = Vector3.zero end
+                    if velocity then velocity.Enabled = true end
+                    if orientation then orientation.Enabled = true end
                     setFlightState(true)
-                    graceRemaining = 0.6
-                    print("[NorthDLC Fly] Adaptive resumed")
+                    setMovementRecoveryPaused(false)
+                    graceRemaining = recoveryGrace
+                    print("[NorthDLC " .. recoveryLabel .. "] Fly resumed")
                 end
             end
             return
@@ -1602,9 +1640,11 @@ local function runFlyEngine()
             mismatchTime = 0
         end
         -- Ignore long frames when looking for discontinuous position changes.
-        local discontinuity = dt > 0 and dt <= 0.1 and positionError > math.max(6, FlySpeed * dt * 2.5)
+        local positionThreshold = recoveryProfile and recoveryProfile.PositionThreshold or 6
+        local mismatchDuration = recoveryProfile and recoveryProfile.MismatchDuration or 1
+        local discontinuity = dt > 0 and dt <= 0.1 and positionError > math.max(positionThreshold, FlySpeed * dt * 2.5)
         local reason = stateReset and "character state changed" or discontinuity and "position discontinuity" or "sustained velocity mismatch"
-        if FlyDiagnostics and diagnosticCooldown == 0 and (mismatchTime >= 1 or discontinuity) then
+        if (FlyDiagnostics or recoveryProfile and DisablerDiagnostics) and diagnosticCooldown == 0 and (mismatchTime >= mismatchDuration or discontinuity) then
             warn(string.format(
                 "[NorthDLC Fly] Movement mismatch; mode=%s reason=%s positionError=%.2f actual=%s target=%s state=%s anchored=%s platformStand=%s. Collision or external correction possible; network ownership is unconfirmed.",
                 FlyMode, reason, positionError, tostring(actual), tostring(currentVelocity),
@@ -1612,7 +1652,7 @@ local function runFlyEngine()
             ))
             diagnosticCooldown = 5
         end
-        if adaptive and (stateReset or discontinuity or mismatchTime >= 1) then
+        if recoveryEnabled and (stateReset or discontinuity or mismatchTime >= mismatchDuration) then
             mismatchTime = 0
             yieldFlight(reason)
         end
@@ -1640,10 +1680,10 @@ end
 
 local function runNoClipEngine()
     cleanupNoClip()
-    if not NoClipActive then return end
+    if not NoClipActive or MovementRecoveryPaused then return end
 
     NoClipConnection = RunService.Stepped:Connect(function()
-        if not NoClipActive then return end
+        if not NoClipActive or MovementRecoveryPaused then return end
         local char = LocalPlayer.Character
         if not char then return end
 
@@ -1761,7 +1801,7 @@ local Speed = Hub:AddModule(MovementTab, {
             local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
             if hum then
                 SpeedHumanoid, OriginalWalkSpeed = hum, hum.WalkSpeed
-                hum.WalkSpeed = SpeedValue
+                hum.WalkSpeed = MovementRecoveryPaused and OriginalWalkSpeed or SpeedValue
             end
         end
     end
@@ -1773,7 +1813,7 @@ Hub:AddSlider(Speed, {
     Default = 32,
     Callback = function(val)
         SpeedValue = val
-        if Speed.State and SpeedHumanoid and SpeedHumanoid.Parent then SpeedHumanoid.WalkSpeed = val end
+        if Speed.State and not MovementRecoveryPaused and SpeedHumanoid and SpeedHumanoid.Parent then SpeedHumanoid.WalkSpeed = val end
     end
 })
 
@@ -1808,6 +1848,7 @@ Hub:AddModule(PlayerTab, {
         if JumpConnection then JumpConnection:Disconnect() JumpConnection = nil end
         if enabled then
             JumpConnection = UserInputService.JumpRequest:Connect(function()
+                if MovementRecoveryPaused then return end
                 local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
                 if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
             end)
@@ -1913,6 +1954,72 @@ Hub:AddSubToggle(KillAura, {
 -- ─────────────────────────────────────────────────────────────
 -- РЕГИСТРАЦИЯ МОДУЛЕЙ MISC
 -- ─────────────────────────────────────────────────────────────
+local DisablerModule
+DisablerModule = Hub:AddModule(MiscTab, {
+    Name = "Disabler",
+    Description = "Пауза и плавное восстановление Fly после коррекций",
+    Default = false,
+    Callback = function(enabled)
+        local profile = DisablerProfiles[DisablerMode]
+        if enabled and (not profile or profile.GameId ~= game.GameId) then
+            warn("[NorthDLC Disabler] Easy.gg Recovery is available only in Roblox BedWars.")
+            DisablerModule.SetState(false)
+            return
+        end
+        DisablerActive = enabled
+        if FlyActive and not Hub.Destroyed then runFlyEngine() end
+        if enabled and FlyMode == "AirWalk" then
+            warn("[NorthDLC Disabler] Recovery supports Smooth Physics, Velocity, CFrame and Adaptive; select one of these Fly modes.")
+        end
+    end,
+})
+local disablerOptions = {}
+for name in pairs(DisablerProfiles) do table.insert(disablerOptions, name) end
+table.sort(disablerOptions)
+Hub:AddDropdown(DisablerModule, {
+    Name = "Mode",
+    Options = disablerOptions,
+    Default = DisablerMode,
+    Callback = function(mode)
+        DisablerMode = mode
+        if DisablerActive then DisablerModule.Callback(true) end
+    end,
+})
+Hub:AddSlider(DisablerModule, {
+    Name = "Recovery Pause (sec)",
+    Min = 0.3,
+    Max = 2,
+    Default = 0.8,
+    Callback = function(value) DisablerPause = value end,
+})
+Hub:AddSlider(DisablerModule, {
+    Name = "Max Recovery Attempts",
+    Min = 1,
+    Max = 5,
+    Default = 3,
+    Callback = function(value) DisablerRetries = math.floor(value) end,
+})
+Hub:AddSlider(DisablerModule, {
+    Name = "Speed Retained After Correction (%)",
+    Min = 30,
+    Max = 90,
+    Default = 65,
+    Callback = function(value) DisablerSpeedRetention = value / 100 end,
+})
+Hub:AddSubToggle(DisablerModule, {
+    Name = "Диагностика Disabler (консоль)",
+    Default = false,
+    Callback = function(enabled) DisablerDiagnostics = enabled end,
+})
+
+RecoveryStateChanged = function(paused)
+    if Hub.Destroyed then return end
+    if NoClipActive then runNoClipEngine() end
+    if Speed.State and SpeedHumanoid and SpeedHumanoid.Parent then
+        SpeedHumanoid.WalkSpeed = paused and OriginalWalkSpeed or SpeedValue
+    end
+end
+
 Hub:AddModule(MiscTab, {
     Name = "Self Destruct",
     Description = "Полная очистка и скрытие следов чита из игры",
@@ -1923,6 +2030,7 @@ Hub:AddModule(MiscTab, {
 
 Hub.OnDestroy = function()
     FlyActive = false
+    DisablerActive = false
     NoClipActive = false
     cleanupFlyPhysics()
     cleanupNoClip()
@@ -1943,5 +2051,3 @@ Hub:Connect(LocalPlayer.CharacterAdded, function(character)
 end)
 
 print("[NorthDLC v7] Загружено. Fly: Smooth Physics / Velocity / CFrame / AirWalk / Adaptive (Test).")
-
-
